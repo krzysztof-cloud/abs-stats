@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>abs-stats</title>
+<link id="favicon" rel="icon" type="image/png" href="/static/logo.png">
+<link rel="apple-touch-icon" href="/static/logo.png">
+<script src="/static/theme.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700&family=Literata:opsz,wght@7..72,500;7..72,700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/style.css">
+<script src="/static/chart.umd.js"></script>
+</head>
+<body>
+<header class="topbar">
+  <a class="brand" href="#/" aria-label="abs-stats home"><span class="logo" id="brand-logo"></span>abs<span class="accent">stats</span></a>
+  <nav id="nav">
+    <a href="#/" data-route="home">Home</a>
+    <a href="#/history" data-route="history">History</a>
+    <a href="#/graphs" data-route="graphs">Graphs</a>
+    <a href="#/users" data-route="users">Users</a>
+    <a href="#/libraries" data-route="libraries">Libraries</a>
+  </nav>
+  <div class="tools">
+    <select id="theme" aria-label="Theme"></select>
+    <select id="range" aria-label="Time range">
+      <option value="1">Last 24 hours</option>
+      <option value="2">Last 48 hours</option>
+      <option value="7">Last 7 days</option>
+      <option value="30" selected>Last 30 days</option>
+      <option value="90">Last 90 days</option>
+      <option value="365">Last year</option>
+      <option value="0">All time</option>
+    </select>
+    <button id="sync" type="button" title="Sync with Audiobookshelf now">Sync now</button>
+  </div>
+</header>
+<div id="status" class="status"></div>
+<main id="view"></main>
+<script src="/static/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,21 @@
+# Secrets
+.env
+*.env
+!.env.example
+
+# Runtime data (database, cover cache)
+data/
+*.db
+*.db-wal
+*.db-shm
+
+# Local compose with real paths
+docker-compose.yml
+docker-compose.override.yml
+
+# Python / OS junk
+__pycache__/
+*.pyc
+.DS_Store
+Thumbs.db
+@eaDir/

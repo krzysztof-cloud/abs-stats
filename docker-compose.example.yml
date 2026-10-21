@@ -1,0 +1,16 @@
+# Example compose file. Copy to docker-compose.yml and adjust.
+# Can also be pasted into an existing Audiobookshelf compose project as an extra service.
+services:
+  abs-stats:
+    build: .
+    image: abs-stats:local
+    container_name: abs-stats
+    restart: unless-stopped
+    user: "1000:1000"            # match the owner of ./data on the host
+    env_file: .env
+    environment:
+      - TZ=America/New_York      # your timezone, used for daily/hourly stats
+    ports:
+      - 8484:8484
+    volumes:
+      - ./data:/data             # SQLite database and cover cache
