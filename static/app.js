@@ -98,12 +98,46 @@ function statCard(title, list, opts) {
   return `<div class="stat-card">${bg}<div class="inner">${poster}<div style="flex:1;min-width:0"><h3>${title}</h3><ol>${items}</ol></div></div></div>`;
 }
 
+// ------------------------------------------------------------ activity
+function activityCard(a) {
+  const pctStart = a.duration ? ` (${Math.round((a.start_position / a.duration) * 100)}%)` : "";
+  const status = a.open ? `<span class="live">Listening now</span>` : `<span class="recent">Active ${ago(a.updated_at)}</span>`;
+  const device = [a.device, a.os].filter(Boolean).join(", ");
+  const client = [a.client, a.client_version].filter(Boolean).join(" ");
+  const facts = [
+    ["Started at", `${clock(a.start_position)}${pctStart}`],
+    ["Listening for", `${dur(a.seconds)}${a.sessions > 1 ? ` over ${a.sessions} sessions` : ""}`],
+    ["Since", when(a.started_at)],
+    ["Client", client || "Unknown"],
+    ["Device", device || a.browser || "Unknown"],
+    ["Stream", METHODS[a.play_method] ?? "Unknown"],
+    ["IP address", a.ip || "Unknown"],
+  ];
+  return `<article class="live-card">
+    <div class="bg" style="background-image:url('/cover/${esc(a.item_id)}')"></div>
+    ${itemLink(a.item_id, cover(a.item_id, a.title))}
+    <div class="live-body">
+      <div class="live-head">${userLink(a.user_id, a.username)}${status}</div>
+      <h3>${itemLink(a.item_id, esc(a.title))}</h3>
+      <div class="muted">${esc(a.author || "")}</div>
+      <dl>${facts.map(([k, v]) => `<div><dt>${k}</dt><dd>${esc(v)}</dd></div>`).join("")}</dl>
+    </div>
+  </article>`;
+}
+
+function activitySection(act) {
+  const mins = Math.round(act.interval / 60);
+  const head = `<div class="section-head"><h2>Activity</h2><span class="muted">${act.rows.length ? `${act.rows.length} active since the last sync` : "Nobody has listened since the last sync"}. Updates every ${mins} minute${mins === 1 ? "" : "s"}.</span></div>`;
+  return head + (act.rows.length ? `<div class="live-grid">${act.rows.map(activityCard).join("")}</div>` : "");
+}
+
 async function pageHome() {
-  const [sum, h] = await Promise.all([api(`/api/summary?days=${days()}`), api(`/api/home?days=${days()}`)]);
+  const [sum, h, act] = await Promise.all([api(`/api/summary?days=${days()}`), api(`/api/home?days=${days()}`), api("/api/activity")]);
   const lib = sum.library;
   const titleOpts = (val) => ({ poster: true, cover: (r) => r.id, name: (r) => r.title, href: (r) => `#/item/${r.id}`, val });
   view.innerHTML = `
-    <section style="margin-top:.5rem">
+    <section id="activity" style="margin-top:.5rem">${activitySection(act)}</section>
+    <section>
       <div class="summary">
         <div><b class="num">${fmtHours(sum.seconds)}</b><span>hours listened</span></div>
         <div><b class="num">${n(sum.sessions)}</b><span>sessions</span></div>
@@ -420,6 +454,15 @@ async function route() {
   window.scrollTo(0, 0);
 }
 
+let lastSeenSync = null;
+// After each background sync, refresh the page in place if it shows live data.
+async function onNewSync() {
+  const name = location.hash.replace(/^#\/?/, "").split(/[/?]/)[0];
+  if (name !== "") return;
+  const y = window.scrollY;
+  try { await pageHome(); window.scrollTo(0, y); } catch (e) {}
+}
+
 async function refreshStatus() {
   try {
     const s = await api("/api/status");
@@ -429,6 +472,12 @@ async function refreshStatus() {
       : s.last_error ? `Last sync failed: ${s.last_error}. Retrying every minute.`
       : s.last_sync ? `Last synced ${ago(s.last_sync)}` : "Waiting for first sync…";
     $("#sync").disabled = s.syncing;
+    const badge = $("#active-badge");
+    badge.textContent = s.active || "";
+    badge.hidden = !s.active;
+    badge.title = `${s.active} active since the last sync`;
+    if (lastSeenSync && s.last_sync !== lastSeenSync && !s.syncing) onNewSync();
+    if (!s.syncing) lastSeenSync = s.last_sync;
     return s;
   } catch (e) { return null; }
 }
@@ -439,7 +488,7 @@ $("#sync").onclick = async () => {
   const before = (await refreshStatus())?.last_sync;
   const poll = setInterval(async () => {
     const s = await refreshStatus();
-    if (s && !s.syncing && s.last_sync !== before) { clearInterval(poll); route(); }
+    if (s && !s.syncing && s.last_sync !== before) { clearInterval(poll); lastSeenSync = s.last_sync; route(); }
   }, 2000);
   setTimeout(() => clearInterval(poll), 120000);
 };
@@ -480,6 +529,6 @@ applyTheme();
 
 rangeSel.onchange = () => { try { localStorage.setItem("abs-range", rangeSel.value); } catch (e) {} route(); };
 window.addEventListener("hashchange", route);
-setInterval(refreshStatus, 60000);
+setInterval(refreshStatus, 20000);
 refreshStatus();
 route();

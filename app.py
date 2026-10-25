@@ -16,7 +16,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 ABS_URL = os.environ["ABS_URL"].rstrip("/")
 ABS_TOKEN = os.environ["ABS_TOKEN"]
 DB_PATH = os.environ.get("DB_PATH", "/data/abs-stats.db")
-POLL_INTERVAL = int(os.environ.get("POLL_INTERVAL", "1800"))
+POLL_INTERVAL = int(os.environ.get("POLL_INTERVAL", "300"))
+ITEMS_INTERVAL = int(os.environ.get("ITEMS_INTERVAL", "1800"))
 WEB_PORT = int(os.environ.get("WEB_PORT", "8484"))
 STATS_USERNAME = os.environ.get("STATS_USERNAME", "abs-stats")
 DISCORD_WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL", "").strip()
@@ -24,7 +25,7 @@ NTFY_URL = os.environ.get("NTFY_URL", "").strip()
 OVERLAP_MS = 6 * 3600 * 1000
 RETRY_SECONDS = 60
 COVER_MAX_AGE = 7 * 86400
-UA = "abs-stats/2.0"
+UA = "abs-stats/1.2"
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 STATIC_DIR = os.path.join(BASE_DIR, "static")
@@ -83,6 +84,10 @@ CREATE TABLE IF NOT EXISTS state (key TEXT PRIMARY KEY, value TEXT);
 """
 
 MIGRATIONS = {
+    "sessions": {
+        "ip": "TEXT", "os": "TEXT", "client_version": "TEXT", "device_name": "TEXT", "browser": "TEXT",
+        "server_version": "TEXT",
+    },
     "library_items": {
         "subtitle": "TEXT", "narrator": "TEXT", "series": "TEXT", "genres": "TEXT",
         "published_year": "TEXT", "media_type": "TEXT", "num_chapters": "INTEGER",
@@ -208,6 +213,42 @@ def sync_items(db, notify_new):
     return new
 
 
+SESSION_COLS = ("id", "user_id", "username", "library_id", "library_item_id", "media_type", "title", "author",
+                "narrator", "genres", "duration", "time_listening", "start_position", "end_position", "play_method",
+                "client", "device", "date", "day_of_week", "started_at", "updated_at",
+                "ip", "os", "client_version", "device_name", "browser", "server_version")
+SESSION_SQL = (f"INSERT OR REPLACE INTO sessions ({','.join(SESSION_COLS)}) "
+               f"VALUES ({','.join('?' * len(SESSION_COLS))})")
+
+
+def _join(*parts):
+    return " ".join(p for p in parts if p) or None
+
+
+def save_session(db, s):
+    md = s.get("mediaMetadata") or {}
+    user = s.get("user") or {}
+    di = s.get("deviceInfo") or {}
+    username = user.get("username")
+    if not username and s.get("userId"):
+        row = db.execute("SELECT username FROM users WHERE id = ?", (s["userId"],)).fetchone()
+        username = row[0] if row else None
+    db.execute(SESSION_SQL, (
+        s["id"], s.get("userId"), username,
+        s.get("libraryId"), s.get("libraryItemId"), s.get("mediaType"),
+        s.get("displayTitle") or md.get("title"), s.get("displayAuthor"),
+        ", ".join(md.get("narrators") or []), json.dumps(md.get("genres") or []),
+        s.get("duration"), s.get("timeListening"), s.get("startTime"), s.get("currentTime"),
+        s.get("playMethod"), di.get("clientName") or s.get("mediaPlayer"),
+        di.get("model") or di.get("browserName") or di.get("osName"),
+        s.get("date"), s.get("dayOfWeek"), s.get("startedAt"), s.get("updatedAt"),
+        di.get("ipAddress"), _join(di.get("osName"), di.get("osVersion")), di.get("clientVersion"),
+        di.get("deviceName") or _join(di.get("manufacturer"), di.get("model")),
+        _join(di.get("browserName"), di.get("browserVersion")), s.get("serverVersion"),
+    ))
+    return s.get("updatedAt") or 0
+
+
 def sync_sessions(db):
     cursor = int(get_state(db, "sessions_cursor", "0"))
     newest, page, count = cursor, 0, 0
@@ -217,23 +258,7 @@ def sync_sessions(db):
         if not sessions:
             break
         for s in sessions:
-            md = s.get("mediaMetadata") or {}
-            user = s.get("user") or {}
-            di = s.get("deviceInfo") or {}
-            db.execute(
-                "INSERT OR REPLACE INTO sessions VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                (
-                    s["id"], s.get("userId"), user.get("username"),
-                    s.get("libraryId"), s.get("libraryItemId"), s.get("mediaType"),
-                    s.get("displayTitle") or md.get("title"), s.get("displayAuthor"),
-                    ", ".join(md.get("narrators") or []), json.dumps(md.get("genres") or []),
-                    s.get("duration"), s.get("timeListening"), s.get("startTime"), s.get("currentTime"),
-                    s.get("playMethod"), di.get("clientName") or s.get("mediaPlayer"),
-                    di.get("model") or di.get("browserName") or di.get("osName"),
-                    s.get("date"), s.get("dayOfWeek"), s.get("startedAt"), s.get("updatedAt"),
-                ),
-            )
-            newest = max(newest, s.get("updatedAt") or 0)
+            newest = max(newest, save_session(db, s))
             count += 1
         oldest = min(s.get("updatedAt") or 0 for s in sessions)
         page += 1
@@ -241,6 +266,21 @@ def sync_sessions(db):
             break
     set_state(db, "sessions_cursor", newest)
     log.info("sessions synced: %d processed", count)
+
+
+def sync_open_sessions(db):
+    """Sessions currently open in Audiobookshelf. Best effort: older servers may not expose this."""
+    try:
+        data = api("/api/sessions/open")
+    except Exception as e:
+        log.info("open sessions unavailable: %s", e)
+        return
+    ids = []
+    for s in data.get("sessions", []):
+        if s.get("id"):
+            save_session(db, s)
+            ids.append(s["id"])
+    set_state(db, "open_sessions", json.dumps(ids))
 
 
 def sync_users(db, notify_finished):
@@ -295,11 +335,16 @@ def notify(lines):
 
 def run_once(db):
     initialized = get_state(db, "initialized") == "1"
-    new_items = sync_items(db, initialized)
-    sync_sessions(db)
+    started = now_ms()
+    new_items = []
+    if not initialized or started - int(get_state(db, "last_items_sync", "0")) >= ITEMS_INTERVAL * 1000 - 5000:
+        new_items = sync_items(db, initialized)
+        set_state(db, "last_items_sync", started)
     finished = sync_users(db, initialized)
+    sync_sessions(db)
+    sync_open_sessions(db)
     set_state(db, "initialized", "1")
-    set_state(db, "last_sync", now_ms())
+    set_state(db, "last_sync", started)
     db.commit()
     lines = []
     for username, item_id in finished:
@@ -350,7 +395,52 @@ def since(q):
 
 def api_status(db, q):
     return {"last_sync": int(get_state(db, "last_sync", "0")), "syncing": STATUS["syncing"],
-            "last_error": STATUS["last_error"], "interval": POLL_INTERVAL}
+            "last_error": STATUS["last_error"], "interval": POLL_INTERVAL,
+            "active": len(activity_rows(db))}
+
+
+def activity_window(db):
+    """Start of the 'active since the last sync' window: one sync interval (plus a minute of grace)
+    before the latest sync. Anchored to the interval so a manual sync doesn't shrink it."""
+    return int(get_state(db, "last_sync", "0")) - (POLL_INTERVAL + 60) * 1000
+
+
+def activity_rows(db):
+    if not int(get_state(db, "last_sync", "0")):
+        return []
+    try:
+        open_ids = set(json.loads(get_state(db, "open_sessions", "[]")))
+    except ValueError:
+        open_ids = set()
+    since_ms = activity_window(db)
+    marks = ",".join("?" * len(open_ids)) or "''"
+    sessions = rows(db, f"""SELECT s.*, COALESCE(s.username, u.username) AS uname
+        FROM sessions s LEFT JOIN users u ON u.id = s.user_id
+        WHERE s.updated_at >= ? OR s.id IN ({marks})
+        ORDER BY s.started_at""", [since_ms, *open_ids])
+    # One card per user and title: where this stretch started, total listened, latest connection.
+    groups = {}
+    for r in sessions:
+        g = groups.get((r["user_id"], r["library_item_id"]))
+        if g is None:
+            groups[(r["user_id"], r["library_item_id"])] = g = {
+                "user_id": r["user_id"], "username": r["uname"], "item_id": r["library_item_id"],
+                "title": r["title"], "author": r["author"], "media_type": r["media_type"], "duration": r["duration"],
+                "start_position": r["start_position"], "started_at": r["started_at"],
+                "seconds": 0, "sessions": 0, "open": False,
+            }
+        g["seconds"] += r["time_listening"] or 0
+        g["sessions"] += 1
+        g["open"] = g["open"] or r["id"] in open_ids
+        g.update(updated_at=r["updated_at"], client=r["client"], client_version=r["client_version"],
+                 device=r["device_name"] or r["device"], os=r["os"], browser=r["browser"], ip=r["ip"],
+                 play_method=r["play_method"])
+    return sorted(groups.values(), key=lambda g: (not g["open"], -(g["updated_at"] or 0)))
+
+
+def api_activity(db, q):
+    return {"since": activity_window(db), "last_sync": int(get_state(db, "last_sync", "0")),
+            "interval": POLL_INTERVAL, "rows": activity_rows(db)}
 
 
 def api_summary(db, q):
@@ -582,7 +672,7 @@ def api_library_recent(db, lib_id):
                        ORDER BY added_at DESC LIMIT 8""", (lib_id,))
 
 
-ROUTES = {"status": api_status, "summary": api_summary, "home": api_home, "history": api_history,
+ROUTES = {"status": api_status, "activity": api_activity, "summary": api_summary, "home": api_home, "history": api_history,
           "users": api_users, "graphs": api_graphs, "libraries": api_libraries}
 ID_ROUTES = {"user": api_user, "item": api_item, "library": api_library_recent}
 SAFE_ID = re.compile(r"^[A-Za-z0-9_-]{1,80}$")

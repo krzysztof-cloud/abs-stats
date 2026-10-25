@@ -281,3 +281,31 @@ td.title .s { font-size: .8rem; color: var(--muted); }
   .tools select { flex: 1; min-width: 0; max-width: none; }
   .tools button { white-space: nowrap; }
 }
+
+/* activity (v1.2) */
+.section-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: .4rem 1rem; margin-bottom: .9rem; }
+.section-head h2 { margin: 0; }
+.section-head .muted { font-size: .85rem; }
+.live-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(440px, 1fr)); gap: 1rem; }
+.live-card { position: relative; overflow: hidden; display: flex; gap: 1.1rem; padding: 1rem; border-radius: var(--radius-lg);
+  background: var(--surface); border: 1px solid var(--line); }
+.live-card .bg { position: absolute; inset: -30px; background-size: cover; background-position: center; filter: blur(28px) saturate(1.2); opacity: .28; }
+.live-card > *:not(.bg) { position: relative; }
+.live-card > a, .live-card > .cover { flex: 0 0 132px; width: 132px; align-self: flex-start; }
+.live-body { flex: 1; min-width: 0; }
+.live-body h3 { font-size: 1.15rem; margin-top: .45rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.live-body .muted { font-size: .9rem; }
+.live-head { display: flex; align-items: center; justify-content: space-between; gap: .5rem; }
+.live, .recent { font-size: .8rem; font-weight: 600; padding: .15rem .55rem; border-radius: 99px; white-space: nowrap; }
+.live { background: var(--gold); color: var(--on-avatar); }
+.recent { border: 1px solid var(--line); color: var(--muted); }
+.live-body dl { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .45rem 1rem; margin: .8rem 0 0; }
+.live-body dt { font-size: .75rem; color: var(--muted); }
+.live-body dd { margin: 0; font-size: .88rem; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.badge { display: inline-block; min-width: 1.25rem; padding: 0 .35rem; margin-left: .2rem; border-radius: 99px; font-size: .72rem;
+  line-height: 1.25rem; text-align: center; font-weight: 700; background: var(--gold); color: var(--on-avatar); vertical-align: 1px; }
+.badge[hidden] { display: none; }
+@media (max-width: 900px) {
+  .live-grid { grid-template-columns: 1fr; }
+  .live-card > a, .live-card > .cover { flex-basis: 88px; width: 88px; }
+}
