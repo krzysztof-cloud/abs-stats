@@ -126,8 +126,9 @@ function activityCard(a) {
 }
 
 function activitySection(act) {
-  const mins = Math.round(act.interval / 60);
-  const head = `<div class="section-head"><h2>Activity</h2><span class="muted">${act.rows.length ? `${act.rows.length} active since the last sync` : "Nobody has listened since the last sync"}. Updates every ${mins} minute${mins === 1 ? "" : "s"}.</span></div>`;
+  const plural = (n, w) => `${n} ${w}${n === 1 ? "" : "s"}`;
+  const win = Math.round(act.window / 60), every = Math.round(act.interval / 60);
+  const head = `<div class="section-head"><h2>Activity</h2><span class="muted">${act.rows.length ? `${act.rows.length} active in the last ${plural(win, "minute")}` : `Nobody has listened in the last ${plural(win, "minute")}`}. Syncs every ${plural(every, "minute")}.</span></div>`;
   return head + (act.rows.length ? `<div class="live-grid">${act.rows.map(activityCard).join("")}</div>` : "");
 }
 
@@ -454,7 +455,7 @@ async function route() {
   window.scrollTo(0, 0);
 }
 
-let lastSeenSync = null;
+let lastSeenSync = null, lastActive = null;
 // After each background sync, refresh the page in place if it shows live data.
 async function onNewSync() {
   const name = location.hash.replace(/^#\/?/, "").split(/[/?]/)[0];
@@ -475,9 +476,10 @@ async function refreshStatus() {
     const badge = $("#active-badge");
     badge.textContent = s.active || "";
     badge.hidden = !s.active;
-    badge.title = `${s.active} active since the last sync`;
-    if (lastSeenSync && s.last_sync !== lastSeenSync && !s.syncing) onNewSync();
-    if (!s.syncing) lastSeenSync = s.last_sync;
+    badge.title = `${s.active} active now`;
+    // Re-render after a new sync, or when someone drops out of (or into) the active window.
+    if (!s.syncing && ((lastSeenSync && s.last_sync !== lastSeenSync) || (lastActive !== null && s.active !== lastActive))) onNewSync();
+    if (!s.syncing) { lastSeenSync = s.last_sync; lastActive = s.active; }
     return s;
   } catch (e) { return null; }
 }

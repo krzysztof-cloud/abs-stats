@@ -44,6 +44,7 @@ History is stored locally, so it survives Audiobookshelf cleanups and migrations
 | `ABS_TOKEN` | required | API token of the admin service account |
 | `POLL_INTERVAL` | `300` | Seconds between syncs of sessions, progress and activity. Failed syncs retry after 60 seconds |
 | `ITEMS_INTERVAL` | `1800` | Seconds between full library scans (new items, metadata) |
+| `ACTIVE_WINDOW` | `300` | Seconds since last activity before a reader drops off the Activity panel |
 | `STATS_USERNAME` | `abs-stats` | Service account name, excluded from user stats |
 | `TZ` | `America/New_York` | Timezone for daily and hourly grouping |
 | `WEB_PORT` | `8484` | Port the web UI listens on |
@@ -59,7 +60,7 @@ History is stored locally, so it survives Audiobookshelf cleanups and migrations
 ## Notes
 
 - **Playback speed** is calculated as book time covered divided by real listening time. Sessions where the listener skipped or rewound show `n/a`.
-- **Activity** shows anyone whose session was updated in the last sync interval (plus a minute of grace). Sessions Audiobookshelf reports as currently open are marked "Listening now". It is not a live position tracker.
+- **Activity** shows anyone Audiobookshelf heard from in the last `ACTIVE_WINDOW` seconds (default 5 minutes, plus a minute for sync lag). Cards drop off on their own once someone stops. Open sessions that are still being updated are marked "Listening now". It is not a live position tracker.
 - Covers are fetched from Audiobookshelf and cached in `data/covers`.
 
 ## License
@@ -68,6 +69,7 @@ MIT. Bundles [Chart.js](https://www.chartjs.org/) (MIT).
 
 ## Changelog
 
+- **1.2.1:** Activity only shows readers active in the last 5 minutes and clears itself; abandoned open sessions no longer stick
 - **1.2:** Activity panel with connection details, 5-minute syncs (library scans stay at 30 minutes), page refreshes itself after each sync
 - **1.1:** 24 and 48 hour ranges, hourly graphs, start/end position and speed in History, circular logo, themes and holiday themes
 - **1.0:** First release

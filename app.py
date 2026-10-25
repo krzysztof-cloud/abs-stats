@@ -18,6 +18,7 @@ ABS_TOKEN = os.environ["ABS_TOKEN"]
 DB_PATH = os.environ.get("DB_PATH", "/data/abs-stats.db")
 POLL_INTERVAL = int(os.environ.get("POLL_INTERVAL", "300"))
 ITEMS_INTERVAL = int(os.environ.get("ITEMS_INTERVAL", "1800"))
+ACTIVE_WINDOW = int(os.environ.get("ACTIVE_WINDOW", "300"))
 WEB_PORT = int(os.environ.get("WEB_PORT", "8484"))
 STATS_USERNAME = os.environ.get("STATS_USERNAME", "abs-stats")
 DISCORD_WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL", "").strip()
@@ -400,9 +401,9 @@ def api_status(db, q):
 
 
 def activity_window(db):
-    """Start of the 'active since the last sync' window: one sync interval (plus a minute of grace)
-    before the latest sync. Anchored to the interval so a manual sync doesn't shrink it."""
-    return int(get_state(db, "last_sync", "0")) - (POLL_INTERVAL + 60) * 1000
+    """Readers count as active if Audiobookshelf heard from them in the last ACTIVE_WINDOW seconds
+    (plus a minute for sync lag), measured from now so cards drop off on their own."""
+    return now_ms() - (ACTIVE_WINDOW + 60) * 1000
 
 
 def activity_rows(db):
@@ -413,11 +414,10 @@ def activity_rows(db):
     except ValueError:
         open_ids = set()
     since_ms = activity_window(db)
-    marks = ",".join("?" * len(open_ids)) or "''"
     sessions = rows(db, f"""SELECT s.*, COALESCE(s.username, u.username) AS uname
         FROM sessions s LEFT JOIN users u ON u.id = s.user_id
-        WHERE s.updated_at >= ? OR s.id IN ({marks})
-        ORDER BY s.started_at""", [since_ms, *open_ids])
+        WHERE s.updated_at >= ?
+        ORDER BY s.started_at""", [since_ms])
     # One card per user and title: where this stretch started, total listened, latest connection.
     groups = {}
     for r in sessions:
@@ -440,7 +440,7 @@ def activity_rows(db):
 
 def api_activity(db, q):
     return {"since": activity_window(db), "last_sync": int(get_state(db, "last_sync", "0")),
-            "interval": POLL_INTERVAL, "rows": activity_rows(db)}
+            "interval": POLL_INTERVAL, "window": ACTIVE_WINDOW, "rows": activity_rows(db)}
 
 
 def api_summary(db, q):
