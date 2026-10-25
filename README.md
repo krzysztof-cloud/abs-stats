@@ -32,6 +32,8 @@ History is stored locally, so it survives Audiobookshelf cleanups and migrations
    mkdir data                                        # must be writable by the user in the compose file
    ```
 4. **Start:** `docker compose up -d --build`
+
+   Or skip building: a prebuilt image (amd64 and arm64) is published to `ghcr.io/krzysztof-cloud/abs-stats:latest` on every push to `main`. Replace the `build:` section with `image: ghcr.io/krzysztof-cloud/abs-stats:latest`.
 5. **Open** `http://<host>:8484`. The first sync runs on startup and imports existing history.
 
 ## Configuration
