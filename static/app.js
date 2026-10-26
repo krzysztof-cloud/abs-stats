@@ -44,6 +44,13 @@ function speed(r) {
   if (s < 0.5 || s > 4) return null;
   return (Math.round(s * 20) / 20).toFixed(2).replace(/0$/, "");
 }
+// The book's own chapter title, with its position: "Chapter 29 (30 of 51)".
+function chapterName(c) {
+  if (!c) return "";
+  const t = (c.title || "").trim();
+  return t ? `${t} (${c.index} of ${c.count})` : `Chapter ${c.index} of ${c.count}`;
+}
+const chapterLeft = (c) => c ? `${dur(c.left)} left in chapter` : "";
 const hours = (sec) => (sec || 0) / 3600;
 const fmtHours = (sec) => { const h = hours(sec); return h >= 100 ? Math.round(h).toLocaleString() : h.toFixed(1); };
 const n = (v) => (v || 0).toLocaleString();
@@ -105,6 +112,7 @@ function activityCard(a) {
   const device = [a.device, a.os].filter(Boolean).join(", ");
   const client = [a.client, a.client_version].filter(Boolean).join(" ");
   const facts = [
+    ...(a.chapter ? [["Chapter", chapterName(a.chapter), chapterLeft(a.chapter)]] : []),
     ["Started at", `${clock(a.start_position)}${pctStart}`],
     ["Listening for", `${dur(a.seconds)}${a.sessions > 1 ? ` over ${a.sessions} sessions` : ""}`],
     ["Since", when(a.started_at)],
@@ -120,7 +128,7 @@ function activityCard(a) {
       <div class="live-head">${userLink(a.user_id, a.username)}${status}</div>
       <h3>${itemLink(a.item_id, esc(a.title))}</h3>
       <div class="muted">${esc(a.author || "")}</div>
-      <dl>${facts.map(([k, v]) => `<div><dt>${k}</dt><dd>${esc(v)}</dd></div>`).join("")}</dl>
+      <dl>${facts.map(([k, v, sub]) => `<div${sub ? ' class="wide"' : ""}><dt>${k}</dt><dd title="${esc(v)}">${esc(v)}${sub ? `<div class="muted sub">${esc(sub)}</div>` : ""}</dd></div>`).join("")}</dl>
     </div>
   </article>`;
 }
@@ -196,19 +204,20 @@ function shelf(list, map, emptyText = "Nothing here yet.") {
 function historyTable(rows, { showUser = true, showTitle = true } = {}) {
   if (!rows.length) return `<div class="empty-state">No sessions match.</div>`;
   return `<div class="table-wrap"><table>
-    <thead><tr><th>Started</th>${showUser ? "<th>User</th>" : ""}${showTitle ? "<th>Title</th>" : ""}<th>Client</th><th>Device</th><th>Method</th><th>Listened</th><th>Starting time</th><th>Ending time</th><th>Speed</th></tr></thead>
+    <thead><tr><th>Started</th>${showUser ? "<th>User</th>" : ""}${showTitle ? "<th>Title</th>" : ""}<th>Client</th><th>Device</th><th>Method</th><th>Listened</th><th>Starting time</th><th>Ending time</th>${showTitle ? "" : "<th>Ended in</th>"}<th>Speed</th></tr></thead>
     <tbody>${rows.map((r) => {
       const sp = speed(r);
       return `<tr>
         <td class="num" title="${esc(new Date(r.started_at).toString())}">${when(r.started_at)}</td>
         ${showUser ? `<td>${userLink(r.user_id, r.username)}</td>` : ""}
-        ${showTitle ? `<td class="title">${itemLink(r.item_id, cover(r.item_id, ""))}<div><div class="t">${itemLink(r.item_id, esc(r.title))}</div><div class="s">${esc(r.author || "")}</div></div></td>` : ""}
+        ${showTitle ? `<td class="title">${itemLink(r.item_id, cover(r.item_id, ""))}<div><div class="t">${itemLink(r.item_id, esc(r.title))}</div><div class="s">${esc(r.author || "")}</div>${r.chapter ? `<div class="chap">Ended in ${esc(chapterName(r.chapter))}, ${esc(chapterLeft(r.chapter))}</div>` : ""}</div></td>` : ""}
         <td>${esc(r.client || "Unknown")}</td>
         <td class="muted">${esc(r.device || "")}</td>
         <td class="muted">${METHODS[r.play_method] ?? ""}</td>
         <td class="num">${dur(r.time_listening)}</td>
         <td class="num" title="${pct(r.start_position, r.duration)}">${clock(r.start_position)}</td>
         <td class="num" title="${pct(r.end_position, r.duration)}">${clock(r.end_position)}</td>
+        ${showTitle ? "" : `<td>${r.chapter ? `${esc(chapterName(r.chapter))}<div class="s muted">${esc(chapterLeft(r.chapter))}</div>` : `<span class="muted">Unknown</span>`}</td>`}
         ${sp ? `<td class="num speed">${sp}x</td>` : `<td class="speed na" title="Can't calculate: the session was very short, or the listener skipped or rewound during it.">n/a</td>`}
       </tr>`; }).join("")}</tbody></table></div>`;
 }
@@ -398,11 +407,10 @@ async function pageItem(id) {
     <section>
       <h2>Listeners</h2>
       ${it.listeners.length ? `<div class="table-wrap"><table>
-        <thead><tr><th>User</th><th>Progress</th><th></th><th>Time listened</th><th>Last update</th></tr></thead>
+        <thead><tr><th>User</th><th>Progress</th><th>Time listened</th><th>Last update</th></tr></thead>
         <tbody>${it.listeners.map((l) => `<tr>
           <td>${userLink(l.user_id, l.username)}</td>
-          <td><div class="progress"><i style="left:0;width:${(l.is_finished ? 1 : l.progress || 0) * 100}%"></i></div></td>
-          <td class="num">${l.is_finished ? `Finished ${dateOnly(l.finished_at)}` : `${Math.round((l.progress || 0) * 100)}%`}</td>
+          <td><div class="prog-cell"><div class="progress"><i style="left:0;width:${(l.is_finished ? 1 : l.progress || 0) * 100}%"></i></div><span class="num">${l.is_finished ? `Finished ${dateOnly(l.finished_at)}` : `${Math.round((l.progress || 0) * 100)}%`}</span></div></td>
           <td class="num">${dur(l.seconds)}</td>
           <td class="muted">${ago(l.last_update)}</td></tr>`).join("")}</tbody></table></div>` : `<div class="empty-state">Nobody has started this yet.</div>`}
     </section>
@@ -473,6 +481,8 @@ async function refreshStatus() {
       : s.last_error ? `Last sync failed: ${s.last_error}. Retrying every minute.`
       : s.last_sync ? `Last synced ${ago(s.last_sync)}` : "Waiting for first sync…";
     $("#sync").disabled = s.syncing;
+    const iv = $("#interval");
+    if (document.activeElement !== iv) iv.value = String(s.interval);
     const badge = $("#active-badge");
     badge.textContent = s.active || "";
     badge.hidden = !s.active;
@@ -528,6 +538,13 @@ themeSel.value = absTheme.choice;
 themeSel.onchange = () => { absTheme.set(themeSel.value); applyTheme(); route(); };
 try { matchMedia("(prefers-color-scheme: light)").addEventListener("change", () => { if (["system", "seasonal"].includes(absTheme.choice)) { absTheme.set(absTheme.choice); applyTheme(); route(); } }); } catch (e) {}
 applyTheme();
+
+$("#interval").onchange = async (e) => {
+  const r = await fetch("/api/settings", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ interval: +e.target.value }) });
+  if (!r.ok) { const err = await r.json().catch(() => ({})); $("#status").textContent = err.error || "Couldn't save the sync interval."; return; }
+  await refreshStatus();
+  if (location.hash.replace(/^#\/?/, "") === "") route();
+};
 
 rangeSel.onchange = () => { try { localStorage.setItem("abs-range", rangeSel.value); } catch (e) {} route(); };
 window.addEventListener("hashchange", route);

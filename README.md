@@ -4,9 +4,9 @@ A Tautulli-style stats dashboard for [Audiobookshelf](https://www.audiobookshelf
 
 ## Features
 
-- **Activity:** Tautulli-style cards for everyone who listened since the last sync: what they're listening to, where in the book they started, how long they've listened, client, device, stream type and IP address. Refreshes on its own after each sync
+- **Activity:** Tautulli-style cards for everyone who listened since the last sync: what they're listening to, the current chapter and time left in it, where in the book they started, how long they've listened, client, device, stream type and IP address. Refreshes on its own after each sync
 - **Home:** listening totals, most listened and most popular titles, top authors, listeners, clients and genres, recent activity, recently added and finished books
-- **History:** searchable, filterable session log with start and end position in the book and calculated playback speed
+- **History:** searchable, filterable session log with start and end position, the chapter each session ended in (and time left in it), and calculated playback speed
 - **Graphs:** listening by hour, day or month (stacked by user), day of week, hour of day, client, device, genre and play method
 - **Users and titles:** per-user and per-book pages with progress, totals and history
 - **Libraries:** item counts, runtime, size and listening per library
@@ -42,9 +42,9 @@ History is stored locally, so it survives Audiobookshelf cleanups and migrations
 |---|---|---|
 | `ABS_URL` | required | Audiobookshelf URL reachable from the container |
 | `ABS_TOKEN` | required | API token of the admin service account |
-| `POLL_INTERVAL` | `300` | Seconds between syncs of sessions, progress and activity. Failed syncs retry after 60 seconds |
+| `POLL_INTERVAL` | `300` | Default seconds between syncs of sessions, progress and activity. Can be changed in the web UI (1 minute to 1 hour), which takes priority. Failed syncs retry after 60 seconds |
 | `ITEMS_INTERVAL` | `1800` | Seconds between full library scans (new items, metadata) |
-| `ACTIVE_WINDOW` | `300` | Seconds since last activity before a reader drops off the Activity panel |
+| `ACTIVE_WINDOW` | `300` | Seconds since last activity before a reader drops off the Activity panel. Stretches to the sync interval when syncs are slower |
 | `STATS_USERNAME` | `abs-stats` | Service account name, excluded from user stats |
 | `TZ` | `America/New_York` | Timezone for daily and hourly grouping |
 | `WEB_PORT` | `8484` | Port the web UI listens on |
@@ -61,6 +61,7 @@ History is stored locally, so it survives Audiobookshelf cleanups and migrations
 
 - **Playback speed** is calculated as book time covered divided by real listening time. Sessions where the listener skipped or rewound show `n/a`.
 - **Activity** shows anyone Audiobookshelf heard from in the last `ACTIVE_WINDOW` seconds (default 5 minutes, plus a minute for sync lag). Cards drop off on their own once someone stops. Open sessions that are still being updated are marked "Listening now". It is not a live position tracker.
+- **Chapters** are fetched once per listened book (up to 40 books per sync, so the first backfill is spread out) and refreshed when the book's metadata changes.
 - Covers are fetched from Audiobookshelf and cached in `data/covers`.
 
 ## License
@@ -69,6 +70,7 @@ MIT. Bundles [Chart.js](https://www.chartjs.org/) (MIT).
 
 ## Changelog
 
+- **1.3:** Sync interval picker (1 minute to 1 hour), current chapter in Activity, chapter ended in (and time left) in History, progress % next to the bar on title pages
 - **1.2.1:** Activity only shows readers active in the last 5 minutes and clears itself; abandoned open sessions no longer stick
 - **1.2:** Activity panel with connection details, 5-minute syncs (library scans stay at 30 minutes), page refreshes itself after each sync
 - **1.1:** 24 and 48 hour ranges, hourly graphs, start/end position and speed in History, circular logo, themes and holiday themes

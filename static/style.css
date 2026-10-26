@@ -50,8 +50,10 @@ select, input, button { font: inherit; color: var(--text); background: var(--sur
 button { cursor: pointer; font-weight: 600; }
 button:hover { border-color: var(--gold-dim); }
 button:disabled { opacity: .6; cursor: default; }
-.status { padding: 0 1.5rem; font-size: .8rem; color: var(--muted); text-align: right; min-height: 1.4rem; line-height: 1.4rem; }
-.status.err { color: var(--danger); }
+.status { display: flex; justify-content: flex-end; align-items: center; gap: 1rem; padding: .25rem 1.5rem 0; font-size: .8rem; color: var(--muted); min-height: 1.6rem; }
+.status .interval { display: inline-flex; align-items: center; gap: .4rem; }
+.status select { font-size: .8rem; padding: .1rem .35rem; }
+#status.err { color: var(--danger); }
 
 main { max-width: 1440px; margin: 0 auto; padding: .5rem 1.5rem 4rem; }
 section { margin-top: 2.25rem; }
@@ -309,3 +311,10 @@ td.title .s { font-size: .8rem; color: var(--muted); }
   .live-grid { grid-template-columns: 1fr; }
   .live-card > a, .live-card > .cover { flex-basis: 88px; width: 88px; }
 }
+
+/* v1.3 */
+.prog-cell { display: flex; align-items: center; gap: .75rem; white-space: nowrap; }
+.chap { font-size: .78rem; color: var(--gold); margin-top: .1rem; }
+.live-body dl .wide { grid-column: 1 / -1; }
+.live-body dl .wide dd { white-space: normal; }
+.live-body dl .sub { font-size: .8rem; font-weight: 400; }

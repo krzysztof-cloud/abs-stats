@@ -19,6 +19,8 @@ DB_PATH = os.environ.get("DB_PATH", "/data/abs-stats.db")
 POLL_INTERVAL = int(os.environ.get("POLL_INTERVAL", "300"))
 ITEMS_INTERVAL = int(os.environ.get("ITEMS_INTERVAL", "1800"))
 ACTIVE_WINDOW = int(os.environ.get("ACTIVE_WINDOW", "300"))
+INTERVAL_CHOICES = (60, 120, 300, 900, 1800, 3600)
+CHAPTER_FETCH_LIMIT = 40  # per sync, so the first backfill doesn't hammer the server
 WEB_PORT = int(os.environ.get("WEB_PORT", "8484"))
 STATS_USERNAME = os.environ.get("STATS_USERNAME", "abs-stats")
 DISCORD_WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL", "").strip()
@@ -82,6 +84,8 @@ CREATE TABLE IF NOT EXISTS users (
 );
 
 CREATE TABLE IF NOT EXISTS state (key TEXT PRIMARY KEY, value TEXT);
+
+CREATE TABLE IF NOT EXISTS chapters (item_id TEXT PRIMARY KEY, data TEXT, item_updated_at INTEGER, fetched_at INTEGER);
 """
 
 MIGRATIONS = {
@@ -334,6 +338,62 @@ def notify(lines):
             log.warning("ntfy notify failed: %s", e)
 
 
+def sync_chapters(db):
+    """Cache chapter lists for books people have listened to. Refetched when the item changes."""
+    todo = db.execute("""SELECT s.library_item_id, MAX(s.started_at) AS last, i.updated_at
+        FROM sessions s LEFT JOIN library_items i ON i.id = s.library_item_id
+        LEFT JOIN chapters c ON c.item_id = s.library_item_id
+        WHERE COALESCE(s.media_type, 'book') = 'book' AND s.library_item_id IS NOT NULL
+          AND (c.item_id IS NULL OR COALESCE(i.updated_at, 0) > COALESCE(c.item_updated_at, 0))
+        GROUP BY s.library_item_id ORDER BY last DESC LIMIT ?""", (CHAPTER_FETCH_LIMIT,)).fetchall()
+    for item_id, _, updated in todo:
+        try:
+            item = api(f"/api/items/{item_id}")
+            chaps = [[c.get("start", 0), c.get("end", 0), c.get("title") or ""]
+                     for c in ((item.get("media") or {}).get("chapters") or [])]
+        except urllib.error.HTTPError as e:
+            if e.code != 404:
+                raise
+            chaps = []
+        db.execute("INSERT OR REPLACE INTO chapters VALUES (?,?,?,?)", (item_id, json.dumps(chaps), updated or 0, now_ms()))
+    if todo:
+        log.info("chapters synced: %d titles", len(todo))
+
+
+def chapter_at(chaps, pos):
+    if not chaps or pos is None:
+        return None
+    for i, (start, end, title) in enumerate(chaps):
+        if start <= pos < end or i == len(chaps) - 1:
+            return {"index": i + 1, "count": len(chaps), "title": title,
+                    "start": start, "end": end, "left": max(0, end - pos)}
+    return None
+
+
+def add_chapters(db, items, pos_key="end_position", item_key="item_id"):
+    """Attach the chapter at each row's position, as row['chapter']."""
+    ids = {r[item_key] for r in items if r.get(item_key)}
+    cache = {}
+    if ids:
+        marks = ",".join("?" * len(ids))
+        for item_id, data in db.execute(f"SELECT item_id, data FROM chapters WHERE item_id IN ({marks})", list(ids)):
+            try:
+                cache[item_id] = json.loads(data)
+            except ValueError:
+                pass
+    for r in items:
+        r["chapter"] = chapter_at(cache.get(r.get(item_key)), r.get(pos_key))
+    return items
+
+
+def poll_interval(db):
+    try:
+        v = int(get_state(db, "poll_interval", str(POLL_INTERVAL)))
+    except ValueError:
+        v = POLL_INTERVAL
+    return max(60, v)
+
+
 def run_once(db):
     initialized = get_state(db, "initialized") == "1"
     started = now_ms()
@@ -344,6 +404,11 @@ def run_once(db):
     finished = sync_users(db, initialized)
     sync_sessions(db)
     sync_open_sessions(db)
+    db.commit()
+    try:
+        sync_chapters(db)
+    except Exception as e:
+        log.warning("chapter sync failed: %s", e)
     set_state(db, "initialized", "1")
     set_state(db, "last_sync", started)
     db.commit()
@@ -363,7 +428,7 @@ def poll_loop():
         try:
             run_once(db)
             STATUS["last_error"] = None
-            wait = POLL_INTERVAL
+            wait = poll_interval(db)
         except Exception as e:
             log.exception("sync failed, retrying in %ds", RETRY_SECONDS)
             db.rollback()
@@ -396,14 +461,19 @@ def since(q):
 
 def api_status(db, q):
     return {"last_sync": int(get_state(db, "last_sync", "0")), "syncing": STATUS["syncing"],
-            "last_error": STATUS["last_error"], "interval": POLL_INTERVAL,
+            "last_error": STATUS["last_error"], "interval": poll_interval(db), "choices": INTERVAL_CHOICES,
             "active": len(activity_rows(db))}
 
 
 def activity_window(db):
     """Readers count as active if Audiobookshelf heard from them in the last ACTIVE_WINDOW seconds
-    (plus a minute for sync lag), measured from now so cards drop off on their own."""
-    return now_ms() - (ACTIVE_WINDOW + 60) * 1000
+    (plus a minute for sync lag), measured from now so cards drop off on their own. With syncs slower
+    than the window, the window stretches to one sync interval so readers don't vanish between syncs."""
+    return now_ms() - (effective_window(db) + 60) * 1000
+
+
+def effective_window(db):
+    return max(ACTIVE_WINDOW, poll_interval(db))
 
 
 def activity_rows(db):
@@ -434,13 +504,14 @@ def activity_rows(db):
         g["open"] = g["open"] or r["id"] in open_ids
         g.update(updated_at=r["updated_at"], client=r["client"], client_version=r["client_version"],
                  device=r["device_name"] or r["device"], os=r["os"], browser=r["browser"], ip=r["ip"],
-                 play_method=r["play_method"])
+                 play_method=r["play_method"], end_position=r["end_position"])
     return sorted(groups.values(), key=lambda g: (not g["open"], -(g["updated_at"] or 0)))
 
 
 def api_activity(db, q):
     return {"since": activity_window(db), "last_sync": int(get_state(db, "last_sync", "0")),
-            "interval": POLL_INTERVAL, "window": ACTIVE_WINDOW, "rows": activity_rows(db)}
+            "interval": poll_interval(db), "window": effective_window(db),
+            "rows": add_chapters(db, activity_rows(db))}
 
 
 def api_summary(db, q):
@@ -511,7 +582,7 @@ def api_history(db, q):
     data = rows(db, f"""SELECT id, user_id, username, library_item_id AS item_id, title, author, client, device,
                     play_method, time_listening, start_position, end_position, duration, started_at, updated_at
                     FROM sessions WHERE {w} ORDER BY started_at DESC LIMIT ? OFFSET ?""", args + [per, (page - 1) * per])
-    return {"total": total[0], "seconds": total[1], "page": page, "per": per, "rows": data}
+    return {"total": total[0], "seconds": total[1], "page": page, "per": per, "rows": add_chapters(db, data)}
 
 
 def api_users(db, q):
@@ -735,6 +806,23 @@ class Handler(BaseHTTPRequestHandler):
         if self.path == "/api/sync":
             SYNC_NOW.set()
             return self.send_json({"ok": True}, 202)
+        if self.path == "/api/settings":
+            try:
+                body = json.loads(self.rfile.read(min(int(self.headers.get("Content-Length", 0)), 4096)) or b"{}")
+                interval = int(body.get("interval"))
+            except (ValueError, TypeError):
+                return self.send_json({"error": "interval must be a number of seconds"}, 400)
+            if interval not in INTERVAL_CHOICES:
+                return self.send_json({"error": f"interval must be one of {INTERVAL_CHOICES}"}, 400)
+            db = connect()
+            try:
+                set_state(db, "poll_interval", interval)
+                db.commit()
+            finally:
+                db.close()
+            log.info("sync interval set to %ds", interval)
+            SYNC_NOW.set()  # wake the loop so the new schedule starts now
+            return self.send_json({"ok": True, "interval": interval})
         self.send_json({"error": "not found"}, 404)
 
     def do_GET(self):

@@ -37,7 +37,15 @@
     <button id="sync" type="button" title="Sync with Audiobookshelf now">Sync now</button>
   </div>
 </header>
-<div id="status" class="status"></div>
+<div class="status">
+  <label class="interval">Sync every
+    <select id="interval" aria-label="Sync interval">
+      <option value="60">1 min</option><option value="120">2 min</option><option value="300">5 min</option>
+      <option value="900">15 min</option><option value="1800">30 min</option><option value="3600">1 hr</option>
+    </select>
+  </label>
+  <span id="status"></span>
+</div>
 <main id="view"></main>
 <script src="/static/app.js"></script>
 </body>
